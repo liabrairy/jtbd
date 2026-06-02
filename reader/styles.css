@@ -224,11 +224,30 @@ h1 {
   line-height: 1.24;
 }
 
-.chapter-card span:last-child {
+.chapter-info {
+  min-width: 0;
+}
+
+.chapter-meta {
   display: block;
   margin-top: 4px;
   color: var(--muted);
   font-size: 12px;
+}
+
+.chapter-match-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  margin-top: 7px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--accent-2) 35%, var(--line));
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-2) 10%, transparent);
+  color: var(--accent-2);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
 }
 
 .reader {

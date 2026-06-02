@@ -36,11 +36,12 @@ const chapterMeta = [
   { file: "18_notes.md", label: "N18", kind: "Примечания" }
 ];
 
-const [html, css, js, cover] = await Promise.all([
+const [html, css, js, cover, favicon] = await Promise.all([
   readFile(path.join(readerDir, "index.html"), "utf8"),
   readFile(path.join(readerDir, "styles.css"), "utf8"),
   readFile(path.join(readerDir, "app.js"), "utf8"),
-  readFile(path.join(readerDir, "cover.png"))
+  readFile(path.join(readerDir, "cover.png")),
+  readFile(path.join(readerDir, "favicon.png"))
 ]);
 
 const chapters = await Promise.all(
@@ -55,8 +56,10 @@ const chapters = await Promise.all(
 const embeddedChapters = JSON.stringify(chapters).replace(/</g, "\\u003c");
 const embeddedFigureMap = JSON.stringify(await buildFigureImageMap()).replace(/</g, "\\u003c");
 const coverData = `data:image/png;base64,${cover.toString("base64")}`;
+const faviconData = `data:image/png;base64,${favicon.toString("base64")}`;
 
 const standalone = html
+  .replaceAll('href="./favicon.png"', `href="${faviconData}"`)
   .replace('<link rel="stylesheet" href="./styles.css">', () => `<style>\n${css}\n</style>`)
   .replace('src="./cover.png"', () => `src="${coverData}"`)
   .replace('<script src="./app.js"></script>', () => `<script>\nwindow.EMBEDDED_CHAPTERS = ${embeddedChapters};\nwindow.FIGURE_IMAGE_MAP = ${embeddedFigureMap};\nwindow.YANDEX_METRIKA_ID = ${JSON.stringify(yandexMetrikaId)};\n</script>\n<script>\n${js}\n</script>`)

@@ -226,22 +226,13 @@ export function BookReader({ chapters }: BookReaderProps) {
 
         <nav className="chapter-list" aria-label="Главы">
           {filteredDocs.map((doc) => (
-            <button
-              className={`chapter-card ${doc.index === activeIndex ? "active" : ""}`}
+            <ChapterCard
+              active={doc.index === activeIndex}
+              doc={doc}
               key={doc.file}
-              type="button"
-              onClick={() => openChapter(doc.index)}
-            >
-              <span className="chapter-index">{doc.label}</span>
-              <span>
-                <strong>
-                  <HighlightedText query={query} value={doc.title} />
-                </strong>
-                <span>
-                  {doc.kind} · {doc.words.toLocaleString("ru-RU")} слов
-                </span>
-              </span>
-            </button>
+              onOpen={() => openChapter(doc.index)}
+              query={query}
+            />
           ))}
         </nav>
 
@@ -405,6 +396,41 @@ function HighlightedText({ query, value }: { query: string; value: string }) {
     ) : (
       part
     )
+  );
+}
+
+function ChapterCard({
+  active,
+  doc,
+  onOpen,
+  query
+}: {
+  active: boolean;
+  doc: BookChapter;
+  onOpen: () => void;
+  query: string;
+}) {
+  const matchCount = countSearchMatches(doc.raw, query);
+
+  return (
+    <button
+      className={`chapter-card ${active ? "active" : ""}`}
+      type="button"
+      onClick={onOpen}
+    >
+      <span className="chapter-index">{doc.label}</span>
+      <span className="chapter-info">
+        <strong>
+          <HighlightedText query={query} value={doc.title} />
+        </strong>
+        <span className="chapter-meta">
+          {doc.kind} · {doc.words.toLocaleString("ru-RU")} слов
+        </span>
+        {matchCount > 0 ? (
+          <span className="chapter-match-count">{formatMentionCount(matchCount)}</span>
+        ) : null}
+      </span>
+    </button>
   );
 }
 
@@ -644,9 +670,28 @@ function inline(value: string): string {
 }
 
 function filterDocs(docs: BookChapter[], query: string): BookChapter[] {
-  const clean = query.trim().toLowerCase();
+  const clean = query.trim();
   if (!clean) return docs;
-  return docs.filter((doc) => `${doc.title}\n${doc.raw}`.toLowerCase().includes(clean));
+  return docs.filter((doc) => countSearchMatches(doc.raw, clean) > 0);
+}
+
+function countSearchMatches(value: string, query: string): number {
+  const clean = query.trim();
+  if (!clean) return 0;
+
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.match(new RegExp(escaped, "gi"))?.length || 0;
+}
+
+function formatMentionCount(count: number): string {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return `${count} упоминание`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} упоминания`;
+  }
+  return `${count} упоминаний`;
 }
 
 function countWords(value: string): number {

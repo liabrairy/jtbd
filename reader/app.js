@@ -118,14 +118,16 @@ function renderChapterList(items) {
   const query = els.searchInput.value.trim();
   els.chapterList.innerHTML = "";
   items.forEach((doc) => {
+    const matchCount = countSearchMatches(doc.raw, query);
     const button = document.createElement("button");
     button.className = `chapter-card ${doc.index === activeIndex ? "active" : ""}`;
     button.type = "button";
     button.innerHTML = `
       <span class="chapter-index">${doc.label}</span>
-      <span>
+      <span class="chapter-info">
         <strong>${highlight(escapeHtml(doc.title), query)}</strong>
-        <span>${doc.kind} · ${doc.words.toLocaleString("ru-RU")} слов</span>
+        <span class="chapter-meta">${doc.kind} · ${doc.words.toLocaleString("ru-RU")} слов</span>
+        ${matchCount > 0 ? `<span class="chapter-match-count">${formatMentionCount(matchCount)}</span>` : ""}
       </span>
     `;
     button.addEventListener("click", () => {
@@ -351,9 +353,28 @@ function inline(value) {
 }
 
 function filterDocs(query) {
-  const clean = query.trim().toLowerCase();
+  const clean = query.trim();
   if (!clean) return docs;
-  return docs.filter((doc) => `${doc.title}\n${doc.raw}`.toLowerCase().includes(clean));
+  return docs.filter((doc) => countSearchMatches(doc.raw, clean) > 0);
+}
+
+function countSearchMatches(value, query) {
+  const clean = query.trim();
+  if (!clean) return 0;
+
+  const escaped = clean.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return value.match(new RegExp(escaped, "gi"))?.length || 0;
+}
+
+function formatMentionCount(count) {
+  const mod10 = count % 10;
+  const mod100 = count % 100;
+
+  if (mod10 === 1 && mod100 !== 11) return `${count} упоминание`;
+  if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+    return `${count} упоминания`;
+  }
+  return `${count} упоминаний`;
 }
 
 function highlight(value, query) {
