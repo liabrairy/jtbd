@@ -3,6 +3,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 
+import {
+  reachYandexMetrikaGoal,
+  sendYandexMetrikaHit,
+  yandexMetrikaGoals
+} from "@/lib/yandex-metrika";
 import type { BookChapter } from "@/types/book";
 
 type BookReaderProps = {
@@ -35,10 +40,12 @@ export function BookReader({ chapters }: BookReaderProps) {
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [readProgress, setReadProgress] = useState(0);
+  const [readerReady, setReaderReady] = useState(false);
   const [sections, setSections] = useState<SectionLink[]>([]);
   const [theme, setTheme] = useState<ReaderTheme>("");
   const contentRef = useRef<HTMLElement>(null);
   const initializedRef = useRef(false);
+  const reportedGoalsRef = useRef(new Set<string>());
   const restoreScrollRef = useRef(true);
 
   const currentDoc = docs[activeIndex] || docs[0];
@@ -54,13 +61,16 @@ export function BookReader({ chapters }: BookReaderProps) {
 
   const updateProgress = useCallback(() => {
     const page = contentRef.current;
-    if (!page || typeof window === "undefined") return;
+    if (!readerReady || !currentDoc || !page || typeof window === "undefined") return;
 
     const rect = page.getBoundingClientRect();
     const total = page.offsetHeight - window.innerHeight * 0.5;
     const read = Math.min(Math.max(-rect.top, 0), Math.max(total, 1));
-    setReadProgress(Math.round((read / Math.max(total, 1)) * 100));
-  }, []);
+    const progress = Math.round((read / Math.max(total, 1)) * 100);
+    setReadProgress(progress);
+
+    trackReadMilestone(currentDoc, progress, reportedGoalsRef.current);
+  }, [currentDoc, readerReady]);
 
   const saveReadingPosition = useCallback(() => {
     if (!currentDoc || typeof window === "undefined") return;
@@ -92,6 +102,7 @@ export function BookReader({ chapters }: BookReaderProps) {
     setActiveIndex(clamp(savedChapter, 0, docs.length - 1));
     setFontSize(clamp(savedFont, 16, 24));
     setTheme(savedTheme === "night" ? "night" : "");
+    setReaderReady(true);
   }, [docs.length]);
 
   useEffect(() => {
@@ -105,10 +116,11 @@ export function BookReader({ chapters }: BookReaderProps) {
   }, [fontSize]);
 
   useEffect(() => {
-    if (!currentDoc || typeof window === "undefined") return;
+    if (!readerReady || !currentDoc || typeof window === "undefined") return;
 
     document.title = `${currentDoc.title} | Читалка`;
     writeStore("reader:chapter", String(activeIndex));
+    trackChapterView(currentDoc);
 
     const y = restoreScrollRef.current
       ? Number(readStore(`reader:scroll:${currentDoc.file}`) || 0)
@@ -120,7 +132,7 @@ export function BookReader({ chapters }: BookReaderProps) {
       0
     );
     window.setTimeout(updateProgress, 80);
-  }, [activeIndex, currentDoc, updateProgress]);
+  }, [activeIndex, currentDoc, readerReady, updateProgress]);
 
   useEffect(() => {
     const content = contentRef.current;
@@ -197,7 +209,13 @@ export function BookReader({ chapters }: BookReaderProps) {
             type="search"
             placeholder="Работа, прогресс, конкуренция..."
             value={query}
-            onChange={(event) => setQuery(event.target.value)}
+            onChange={(event) => {
+              const value = event.target.value;
+              setQuery(value);
+              if (value.trim()) {
+                trackOnce(yandexMetrikaGoals.searchUsed, reportedGoalsRef.current);
+              }
+            }}
           />
         </label>
 
@@ -229,7 +247,12 @@ export function BookReader({ chapters }: BookReaderProps) {
 
         <div className="translator-credit">
           <span>Перевод и подготовка</span>
-          <a href="https://t.me/mark0vartem" target="_blank" rel="noreferrer">
+          <a
+            href="https://t.me/mark0vartem"
+            target="_blank"
+            rel="noreferrer"
+            onClick={() => reachYandexMetrikaGoal(yandexMetrikaGoals.telegramClick)}
+          >
             @mark0vartem
           </a>
           <p>Нашли ошибку в переводе? Напишите, обновлю.</p>
@@ -388,6 +411,63 @@ function HighlightedText({ query, value }: { query: string; value: string }) {
 function assetUrl(value: string): string {
   const normalized = value.startsWith("/") ? value : `/${value}`;
   return `${basePath}${normalized}`;
+}
+
+function trackChapterView(doc: BookChapter): void {
+  const params = {
+    chapter_file: doc.file,
+    chapter_index: doc.index,
+    chapter_kind: doc.kind,
+    chapter_title: doc.title
+  };
+
+  sendYandexMetrikaHit(
+    createChapterAnalyticsUrl(doc.file),
+    `${doc.title} | Читалка`,
+    params
+  );
+}
+
+function trackReadMilestone(doc: BookChapter, progress: number, reportedGoals: Set<string>): void {
+  const milestones = [
+    { goal: yandexMetrikaGoals.read50, value: 50 },
+    { goal: yandexMetrikaGoals.read100, value: 100 }
+  ] as const;
+
+  milestones.forEach(({ goal, value }) => {
+    const key = `${doc.file}:${goal}`;
+    if (progress < value || reportedGoals.has(key)) return;
+
+    reportedGoals.add(key);
+    reachYandexMetrikaGoal(goal, {
+      chapter_file: doc.file,
+      chapter_index: doc.index,
+      chapter_title: doc.title,
+      progress: value
+    });
+  });
+}
+
+function trackOnce(
+  goal: (typeof yandexMetrikaGoals)[keyof typeof yandexMetrikaGoals],
+  reportedGoals: Set<string>
+): void {
+  if (reportedGoals.has(goal)) return;
+
+  reportedGoals.add(goal);
+  reachYandexMetrikaGoal(goal);
+}
+
+function createChapterAnalyticsUrl(chapterFile: string): string {
+  if (typeof window === "undefined") {
+    return `/?chapter=${encodeURIComponent(chapterFile)}`;
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set("chapter", chapterFile);
+  url.hash = "";
+
+  return `${url.pathname}${url.search}`;
 }
 
 function injectFigureImages(markdown: string, figureImageMap: Record<string, string>): string {

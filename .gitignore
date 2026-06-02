@@ -7,3 +7,6 @@ node_modules/
 out/
 npm-debug.log*
 .next-pages-server*.log
+.env
+.env*.local
+!.env.example

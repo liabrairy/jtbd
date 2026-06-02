@@ -23,6 +23,14 @@ const chapters = window.EMBEDDED_CHAPTERS || [
 ];
 
 const figureImageMap = window.FIGURE_IMAGE_MAP || createDefaultFigureImageMap();
+const yandexMetrikaId = normalizeYandexMetrikaId(window.YANDEX_METRIKA_ID || "109588087");
+const yandexMetrikaGoals = {
+  read50: "read_50",
+  read100: "read_100",
+  searchUsed: "search_used",
+  telegramClick: "telegram_click"
+};
+const reportedGoals = new Set();
 
 const els = {
   chapterList: document.querySelector("#chapterList"),
@@ -54,6 +62,7 @@ const savedFont = Number(store.get("reader:font") || 19);
 document.documentElement.dataset.theme = savedTheme || "";
 document.documentElement.style.setProperty("--reader-size", `${savedFont}px`);
 
+initYandexMetrika();
 init();
 
 async function init() {
@@ -85,7 +94,12 @@ async function loadChapter(chapter, index) {
 }
 
 function bindEvents() {
-  els.searchInput.addEventListener("input", () => renderChapterList(filterDocs(els.searchInput.value)));
+  els.searchInput.addEventListener("input", () => {
+    renderChapterList(filterDocs(els.searchInput.value));
+    if (els.searchInput.value.trim()) {
+      trackGoalOnce(yandexMetrikaGoals.searchUsed);
+    }
+  });
   els.prevChapter.addEventListener("click", () => openChapter(activeIndex - 1));
   els.nextChapter.addEventListener("click", () => openChapter(activeIndex + 1));
   els.themeToggle.addEventListener("click", toggleTheme);
@@ -93,6 +107,9 @@ function bindEvents() {
   els.decreaseFont.addEventListener("click", () => adjustFont(-1));
   els.menuButton.addEventListener("click", toggleLibrary);
   els.scrim.addEventListener("click", closeLibrary);
+  document
+    .querySelector(".translator-credit a")
+    ?.addEventListener("click", () => reachYandexMetrikaGoal(yandexMetrikaGoals.telegramClick));
   window.addEventListener("scroll", updateProgress, { passive: true });
   window.addEventListener("beforeunload", saveReadingPosition);
 }
@@ -130,6 +147,7 @@ function openChapter(index, options = {}) {
   els.currentTitle.textContent = doc.title;
   document.title = `${doc.title} | Читалка`;
   els.content.innerHTML = markdownToHtml(doc.raw);
+  trackChapterView(doc);
   renderSections();
   renderChapterList(filterDocs(els.searchInput.value));
   els.prevChapter.disabled = activeIndex === 0;
@@ -346,11 +364,109 @@ function highlight(value, query) {
 }
 
 function updateProgress() {
+  const doc = docs[activeIndex];
+  if (!doc) return;
+
   const page = els.content;
   const rect = page.getBoundingClientRect();
   const total = page.offsetHeight - window.innerHeight * .5;
   const read = Math.min(Math.max(-rect.top, 0), Math.max(total, 1));
-  els.readProgress.style.width = `${Math.round((read / Math.max(total, 1)) * 100)}%`;
+  const progress = Math.round((read / Math.max(total, 1)) * 100);
+  els.readProgress.style.width = `${progress}%`;
+  trackReadMilestone(doc, progress);
+}
+
+function initYandexMetrika() {
+  if (!yandexMetrikaId) return;
+
+  (function(m, e, t, r, i, k, a) {
+    m[i] = m[i] || function() {
+      (m[i].a = m[i].a || []).push(arguments);
+    };
+    m[i].l = 1 * new Date();
+    for (let j = 0; j < document.scripts.length; j += 1) {
+      if (document.scripts[j].src === r) return;
+    }
+    k = e.createElement(t);
+    a = e.getElementsByTagName(t)[0];
+    k.async = 1;
+    k.src = r;
+    a.parentNode.insertBefore(k, a);
+  })(window, document, "script", `https://mc.yandex.ru/metrika/tag.js?id=${yandexMetrikaId}`, "ym");
+
+  window.ym(Number(yandexMetrikaId), "init", {
+    ssr: true,
+    clickmap: true,
+    ecommerce: "dataLayer",
+    referrer: document.referrer,
+    url: location.href,
+    trackLinks: true,
+    accurateTrackBounce: true,
+    webvisor: true
+  });
+}
+
+function trackChapterView(doc) {
+  const params = {
+    chapter_file: doc.file,
+    chapter_index: doc.index,
+    chapter_kind: doc.kind,
+    chapter_title: doc.title
+  };
+
+  sendYandexMetrikaHit(createChapterAnalyticsUrl(doc.file), `${doc.title} | Читалка`, params);
+}
+
+function trackReadMilestone(doc, progress) {
+  [
+    { goal: yandexMetrikaGoals.read50, value: 50 },
+    { goal: yandexMetrikaGoals.read100, value: 100 }
+  ].forEach(({ goal, value }) => {
+    const key = `${doc.file}:${goal}`;
+    if (progress < value || reportedGoals.has(key)) return;
+
+    reportedGoals.add(key);
+    reachYandexMetrikaGoal(goal, {
+      chapter_file: doc.file,
+      chapter_index: doc.index,
+      chapter_title: doc.title,
+      progress: value
+    });
+  });
+}
+
+function sendYandexMetrikaHit(url, title, params = {}) {
+  if (!yandexMetrikaId || typeof window.ym !== "function") return;
+
+  window.ym(Number(yandexMetrikaId), "hit", url, {
+    title,
+    params
+  });
+}
+
+function reachYandexMetrikaGoal(goal, params = {}) {
+  if (!yandexMetrikaId || typeof window.ym !== "function") return;
+
+  window.ym(Number(yandexMetrikaId), "reachGoal", goal, params);
+}
+
+function trackGoalOnce(goal) {
+  if (reportedGoals.has(goal)) return;
+
+  reportedGoals.add(goal);
+  reachYandexMetrikaGoal(goal);
+}
+
+function createChapterAnalyticsUrl(chapterFile) {
+  const url = new URL(window.location.href);
+  url.searchParams.set("chapter", chapterFile);
+  url.hash = "";
+
+  return `${url.pathname}${url.search}`;
+}
+
+function normalizeYandexMetrikaId(value) {
+  return /^\d+$/.test(String(value || "").trim()) ? String(value).trim() : "";
 }
 
 function saveReadingPosition() {

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 
+import { YandexMetrika } from "@/components/yandex-metrika";
 import { bookDescription, bookTitle } from "@/lib/book-data";
 
 import "./globals.css";
@@ -23,7 +24,10 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="ru" suppressHydrationWarning>
-      <body>{children}</body>
+      <body>
+        {children}
+        <YandexMetrika />
+      </body>
     </html>
   );
 }

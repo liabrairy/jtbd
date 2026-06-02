@@ -8,6 +8,9 @@ const translatedDir = path.join(root, "translated");
 const outDir = path.join(root, "dist");
 const outFile = "when-coffee-and-kale-compete-ru.html";
 const figureCount = 36;
+const yandexMetrikaId = normalizeYandexMetrikaId(
+  process.env.NEXT_PUBLIC_YANDEX_METRIKA_ID || process.env.YANDEX_METRIKA_ID
+) || "109588087";
 
 const chapterMeta = [
   { file: "00_translator_note.md", label: "T", kind: "От переводчика" },
@@ -56,7 +59,7 @@ const coverData = `data:image/png;base64,${cover.toString("base64")}`;
 const standalone = html
   .replace('<link rel="stylesheet" href="./styles.css">', () => `<style>\n${css}\n</style>`)
   .replace('src="./cover.png"', () => `src="${coverData}"`)
-  .replace('<script src="./app.js"></script>', () => `<script>\nwindow.EMBEDDED_CHAPTERS = ${embeddedChapters};\nwindow.FIGURE_IMAGE_MAP = ${embeddedFigureMap};\n</script>\n<script>\n${js}\n</script>`)
+  .replace('<script src="./app.js"></script>', () => `<script>\nwindow.EMBEDDED_CHAPTERS = ${embeddedChapters};\nwindow.FIGURE_IMAGE_MAP = ${embeddedFigureMap};\nwindow.YANDEX_METRIKA_ID = ${JSON.stringify(yandexMetrikaId)};\n</script>\n<script>\n${js}\n</script>`)
   .replace("</title>", () => " · один файл</title>")
   .replace("</head>", () => '<meta name="description" content="Автономная HTML-читалка перевода книги When Coffee and Kale Compete.">\n  </head>');
 
@@ -88,4 +91,9 @@ async function buildFigureImageMap() {
     map[String(figure)] = `data:image/png;base64,${image.toString("base64")}`;
   }
   return map;
+}
+
+function normalizeYandexMetrikaId(value) {
+  const clean = String(value || "").trim();
+  return /^\d+$/.test(clean) ? clean : "";
 }
