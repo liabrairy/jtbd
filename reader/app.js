@@ -16,6 +16,7 @@ const chapters = window.EMBEDDED_CHAPTERS || [
   { file: "12_chapter.md", label: "12", kind: "Часть III" },
   { file: "13_chapter.md", label: "13", kind: "Практика" },
   { file: "14_chapter.md", label: "14", kind: "Финал" },
+  { file: "15_chapter.md", label: "15", kind: "Финал" },
   { file: "15_appendix.md", label: "A15", kind: "Приложение" },
   { file: "16_appendix.md", label: "A16", kind: "Приложение" },
   { file: "17_appendix.md", label: "A17", kind: "Приложение" },
@@ -25,11 +26,20 @@ const chapters = window.EMBEDDED_CHAPTERS || [
 const figureImageMap = window.FIGURE_IMAGE_MAP || createDefaultFigureImageMap();
 const yandexMetrikaId = normalizeYandexMetrikaId(window.YANDEX_METRIKA_ID || "109588087");
 const yandexMetrikaGoals = {
-  read50: "read_50",
-  read100: "read_100",
+  bookStarted: "book_started",
+  chapterRead: "chapter_read",
+  bookCompleted: "book_completed",
   searchUsed: "search_used",
   telegramClick: "telegram_click"
 };
+const bookAnalyticsId = "when-coffee-and-kale-compete-ru";
+const bookCompletedStoreKey = "reader:book-completed:v1";
+const bookStartedProgressThreshold = 10;
+const bookStartedStoreKey = "reader:book-started:v1";
+const chapterReadProgressThreshold = 95;
+const mainChapterPattern = /^(\d{2})_chapter\.md$/;
+const readChaptersStoreKey = "reader:read-chapters:v1";
+const readerIdStoreKey = "reader:id:v1";
 const reportedGoals = new Set();
 
 const els = {
@@ -394,7 +404,7 @@ function updateProgress() {
   const read = Math.min(Math.max(-rect.top, 0), Math.max(total, 1));
   const progress = Math.round((read / Math.max(total, 1)) * 100);
   els.readProgress.style.width = `${progress}%`;
-  trackReadMilestone(doc, progress);
+  trackReadingProgress(doc, progress);
 }
 
 function initYandexMetrika() {
@@ -438,22 +448,148 @@ function trackChapterView(doc) {
   sendYandexMetrikaHit(createChapterAnalyticsUrl(doc.file), `${doc.title} | Читалка`, params);
 }
 
-function trackReadMilestone(doc, progress) {
-  [
-    { goal: yandexMetrikaGoals.read50, value: 50 },
-    { goal: yandexMetrikaGoals.read100, value: 100 }
-  ].forEach(({ goal, value }) => {
-    const key = `${doc.file}:${goal}`;
-    if (progress < value || reportedGoals.has(key)) return;
+function trackReadingProgress(doc, progress) {
+  trackBookStarted(doc, progress);
+  trackChapterRead(doc, progress);
+}
 
-    reportedGoals.add(key);
-    reachYandexMetrikaGoal(goal, {
-      chapter_file: doc.file,
-      chapter_index: doc.index,
-      chapter_title: doc.title,
-      progress: value
+function trackBookStarted(doc, progress) {
+  if (
+    !isMainBookChapter(doc) ||
+    progress < bookStartedProgressThreshold ||
+    store.get(bookStartedStoreKey)
+  ) {
+    return;
+  }
+
+  const params = createReadingAnalyticsParams(doc, getReadChapterFiles(), progress);
+  store.set(bookStartedStoreKey, "1");
+  reportedGoals.add(yandexMetrikaGoals.bookStarted);
+  reachYandexMetrikaGoal(yandexMetrikaGoals.bookStarted, params);
+  sendYandexMetrikaUserParams(createReaderUserParams(params));
+}
+
+function trackChapterRead(doc, progress) {
+  if (!isMainBookChapter(doc) || progress < chapterReadProgressThreshold) return;
+
+  const storedReadChapters = getReadChapterFiles();
+  if (storedReadChapters.includes(doc.file)) return;
+
+  const nextReadChapters = sortReadChapterFiles([...storedReadChapters, doc.file]);
+  writeReadChapterFiles(nextReadChapters);
+
+  const params = createReadingAnalyticsParams(doc, nextReadChapters, progress);
+  reportedGoals.add(`${doc.file}:${yandexMetrikaGoals.chapterRead}`);
+  reachYandexMetrikaGoal(yandexMetrikaGoals.chapterRead, params);
+  sendYandexMetrikaUserParams(createReaderUserParams(params));
+
+  if (
+    nextReadChapters.length === getMainBookChapters().length &&
+    !store.get(bookCompletedStoreKey)
+  ) {
+    store.set(bookCompletedStoreKey, "1");
+    reportedGoals.add(yandexMetrikaGoals.bookCompleted);
+    reachYandexMetrikaGoal(yandexMetrikaGoals.bookCompleted, params);
+    sendYandexMetrikaUserParams(createReaderUserParams({ ...params, is_book_completed: "yes" }));
+  }
+}
+
+function createReadingAnalyticsParams(doc, readChapters, progress) {
+  const mainChapters = getMainBookChapters();
+  const totalMainChapters = mainChapters.length;
+  const chaptersReadCount = readChapters.length;
+
+  return {
+    book_id: bookAnalyticsId,
+    reader_id: getReaderId(),
+    chapter_file: doc.file,
+    chapter_index: doc.index,
+    chapter_kind: "main",
+    chapter_label: doc.label,
+    chapter_number: getChapterNumber(doc.file),
+    chapter_title: doc.title,
+    progress,
+    chapters_read_count: chaptersReadCount,
+    total_main_chapters_count: totalMainChapters,
+    book_read_percent: totalMainChapters
+      ? Math.round((chaptersReadCount / totalMainChapters) * 100)
+      : 0,
+    read_chapters: createReadChaptersValue(readChapters),
+    is_book_completed:
+      totalMainChapters > 0 && chaptersReadCount === totalMainChapters ? "yes" : "no"
+  };
+}
+
+function createReaderUserParams(params) {
+  return {
+    UserID: params.reader_id,
+    book_id: params.book_id,
+    chapters_read_count: params.chapters_read_count,
+    book_read_percent: params.book_read_percent,
+    last_read_chapter: params.chapter_file,
+    read_chapters: params.read_chapters,
+    is_book_completed: params.is_book_completed
+  };
+}
+
+function getReadChapterFiles() {
+  const raw = store.get(readChaptersStoreKey);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return sortReadChapterFiles(parsed.filter((value) => typeof value === "string"));
+    }
+  } catch (error) {
+    return sortReadChapterFiles(raw.split(",").map((value) => value.trim()));
+  }
+
+  return [];
+}
+
+function writeReadChapterFiles(chapterFiles) {
+  store.set(readChaptersStoreKey, JSON.stringify(chapterFiles));
+}
+
+function sortReadChapterFiles(chapterFiles) {
+  const mainChapterOrder = new Map(getMainBookChapters().map((doc, index) => [doc.file, index]));
+
+  return [...new Set(chapterFiles)]
+    .filter((file) => mainChapterOrder.has(file))
+    .sort((left, right) => {
+      const leftOrder = mainChapterOrder.get(left) || 0;
+      const rightOrder = mainChapterOrder.get(right) || 0;
+      return leftOrder - rightOrder;
     });
-  });
+}
+
+function getMainBookChapters() {
+  return docs.filter(isMainBookChapter);
+}
+
+function isMainBookChapter(doc) {
+  return mainChapterPattern.test(doc.file);
+}
+
+function getChapterNumber(chapterFile) {
+  return Number(chapterFile.match(mainChapterPattern)?.[1] || 0);
+}
+
+function createReadChaptersValue(chapterFiles) {
+  return chapterFiles.map((file) => file.match(mainChapterPattern)?.[1] || file).join(",");
+}
+
+function getReaderId() {
+  const savedId = store.get(readerIdStoreKey);
+  if (savedId) return savedId;
+
+  const nextId = window.crypto?.randomUUID
+    ? window.crypto.randomUUID()
+    : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  store.set(readerIdStoreKey, nextId);
+  return nextId;
 }
 
 function sendYandexMetrikaHit(url, title, params = {}) {
@@ -469,6 +605,12 @@ function reachYandexMetrikaGoal(goal, params = {}) {
   if (!yandexMetrikaId || typeof window.ym !== "function") return;
 
   window.ym(Number(yandexMetrikaId), "reachGoal", goal, params);
+}
+
+function sendYandexMetrikaUserParams(params) {
+  if (!yandexMetrikaId || typeof window.ym !== "function") return;
+
+  window.ym(Number(yandexMetrikaId), "userParams", params);
 }
 
 function trackGoalOnce(goal) {

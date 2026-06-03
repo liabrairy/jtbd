@@ -6,6 +6,7 @@ import Image from "next/image";
 import {
   reachYandexMetrikaGoal,
   sendYandexMetrikaHit,
+  sendYandexMetrikaUserParams,
   yandexMetrikaGoals
 } from "@/lib/yandex-metrika";
 import type { BookChapter } from "@/types/book";
@@ -22,7 +23,15 @@ type SectionLink = {
 };
 
 const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
+const bookAnalyticsId = "when-coffee-and-kale-compete-ru";
+const bookCompletedStoreKey = "reader:book-completed:v1";
+const bookStartedProgressThreshold = 10;
+const bookStartedStoreKey = "reader:book-started:v1";
+const chapterReadProgressThreshold = 95;
+const mainChapterPattern = /^(\d{2})_chapter\.md$/;
 const memoryStore = new Map<string, string>();
+const readChaptersStoreKey = "reader:read-chapters:v1";
+const readerIdStoreKey = "reader:id:v1";
 
 export function BookReader({ chapters }: BookReaderProps) {
   const figureImageMap = useMemo(() => createDefaultFigureImageMap(), []);
@@ -69,8 +78,8 @@ export function BookReader({ chapters }: BookReaderProps) {
     const progress = Math.round((read / Math.max(total, 1)) * 100);
     setReadProgress(progress);
 
-    trackReadMilestone(currentDoc, progress, reportedGoalsRef.current);
-  }, [currentDoc, readerReady]);
+    trackReadingProgress(currentDoc, docs, progress, reportedGoalsRef.current);
+  }, [currentDoc, docs, readerReady]);
 
   const saveReadingPosition = useCallback(() => {
     if (!currentDoc || typeof window === "undefined") return;
@@ -323,7 +332,7 @@ export function BookReader({ chapters }: BookReaderProps) {
             />
             <div className="hero-stats">
               <span>
-                <strong>14</strong> глав
+                <strong>15</strong> глав
               </span>
               <span>
                 <strong>3</strong> приложения
@@ -454,24 +463,176 @@ function trackChapterView(doc: BookChapter): void {
   );
 }
 
-function trackReadMilestone(doc: BookChapter, progress: number, reportedGoals: Set<string>): void {
-  const milestones = [
-    { goal: yandexMetrikaGoals.read50, value: 50 },
-    { goal: yandexMetrikaGoals.read100, value: 100 }
-  ] as const;
+function trackReadingProgress(
+  doc: BookChapter,
+  docs: BookChapter[],
+  progress: number,
+  reportedGoals: Set<string>
+): void {
+  trackBookStarted(doc, docs, progress, reportedGoals);
+  trackChapterRead(doc, docs, progress, reportedGoals);
+}
 
-  milestones.forEach(({ goal, value }) => {
-    const key = `${doc.file}:${goal}`;
-    if (progress < value || reportedGoals.has(key)) return;
+function trackBookStarted(
+  doc: BookChapter,
+  docs: BookChapter[],
+  progress: number,
+  reportedGoals: Set<string>
+): void {
+  if (
+    !isMainBookChapter(doc) ||
+    progress < bookStartedProgressThreshold ||
+    readStore(bookStartedStoreKey)
+  ) {
+    return;
+  }
 
-    reportedGoals.add(key);
-    reachYandexMetrikaGoal(goal, {
-      chapter_file: doc.file,
-      chapter_index: doc.index,
-      chapter_title: doc.title,
-      progress: value
+  const params = createReadingAnalyticsParams(doc, docs, getReadChapterFiles(docs), progress);
+  writeStore(bookStartedStoreKey, "1");
+  reportedGoals.add(yandexMetrikaGoals.bookStarted);
+  reachYandexMetrikaGoal(yandexMetrikaGoals.bookStarted, params);
+  sendYandexMetrikaUserParams(createReaderUserParams(params));
+}
+
+function trackChapterRead(
+  doc: BookChapter,
+  docs: BookChapter[],
+  progress: number,
+  reportedGoals: Set<string>
+): void {
+  if (!isMainBookChapter(doc) || progress < chapterReadProgressThreshold) return;
+
+  const storedReadChapters = getReadChapterFiles(docs);
+  if (storedReadChapters.includes(doc.file)) return;
+
+  const nextReadChapters = sortReadChapterFiles([...storedReadChapters, doc.file], docs);
+  writeReadChapterFiles(nextReadChapters);
+
+  const params = createReadingAnalyticsParams(doc, docs, nextReadChapters, progress);
+  reportedGoals.add(`${doc.file}:${yandexMetrikaGoals.chapterRead}`);
+  reachYandexMetrikaGoal(yandexMetrikaGoals.chapterRead, params);
+  sendYandexMetrikaUserParams(createReaderUserParams(params));
+
+  if (
+    nextReadChapters.length === getMainBookChapters(docs).length &&
+    !readStore(bookCompletedStoreKey)
+  ) {
+    writeStore(bookCompletedStoreKey, "1");
+    reportedGoals.add(yandexMetrikaGoals.bookCompleted);
+    reachYandexMetrikaGoal(yandexMetrikaGoals.bookCompleted, params);
+    sendYandexMetrikaUserParams(createReaderUserParams({ ...params, is_book_completed: "yes" }));
+  }
+}
+
+function createReadingAnalyticsParams(
+  doc: BookChapter,
+  docs: BookChapter[],
+  readChapters: string[],
+  progress: number
+): Record<string, unknown> {
+  const mainChapters = getMainBookChapters(docs);
+  const totalMainChapters = mainChapters.length;
+  const chaptersReadCount = readChapters.length;
+
+  return {
+    book_id: bookAnalyticsId,
+    reader_id: getReaderId(),
+    chapter_file: doc.file,
+    chapter_index: doc.index,
+    chapter_kind: "main",
+    chapter_label: doc.label,
+    chapter_number: getChapterNumber(doc.file),
+    chapter_title: doc.title,
+    progress,
+    chapters_read_count: chaptersReadCount,
+    total_main_chapters_count: totalMainChapters,
+    book_read_percent: totalMainChapters
+      ? Math.round((chaptersReadCount / totalMainChapters) * 100)
+      : 0,
+    read_chapters: createReadChaptersValue(readChapters),
+    is_book_completed:
+      totalMainChapters > 0 && chaptersReadCount === totalMainChapters ? "yes" : "no"
+  };
+}
+
+function createReaderUserParams(params: Record<string, unknown>): Record<string, unknown> {
+  return {
+    UserID: params.reader_id,
+    book_id: params.book_id,
+    chapters_read_count: params.chapters_read_count,
+    book_read_percent: params.book_read_percent,
+    last_read_chapter: params.chapter_file,
+    read_chapters: params.read_chapters,
+    is_book_completed: params.is_book_completed
+  };
+}
+
+function getReadChapterFiles(docs: BookChapter[]): string[] {
+  const raw = readStore(readChaptersStoreKey);
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (Array.isArray(parsed)) {
+      return sortReadChapterFiles(
+        parsed.filter((value): value is string => typeof value === "string"),
+        docs
+      );
+    }
+  } catch {
+    return sortReadChapterFiles(raw.split(",").map((value) => value.trim()), docs);
+  }
+
+  return [];
+}
+
+function writeReadChapterFiles(chapterFiles: string[]): void {
+  writeStore(readChaptersStoreKey, JSON.stringify(chapterFiles));
+}
+
+function sortReadChapterFiles(chapterFiles: string[], docs: BookChapter[]): string[] {
+  const mainChapterOrder = new Map(
+    getMainBookChapters(docs).map((doc, index) => [doc.file, index])
+  );
+
+  return [...new Set(chapterFiles)]
+    .filter((file) => mainChapterOrder.has(file))
+    .sort((left, right) => {
+      const leftOrder = mainChapterOrder.get(left) ?? 0;
+      const rightOrder = mainChapterOrder.get(right) ?? 0;
+      return leftOrder - rightOrder;
     });
-  });
+}
+
+function getMainBookChapters(docs: BookChapter[]): BookChapter[] {
+  return docs.filter(isMainBookChapter);
+}
+
+function isMainBookChapter(doc: BookChapter): boolean {
+  return mainChapterPattern.test(doc.file);
+}
+
+function getChapterNumber(chapterFile: string): number {
+  return Number(chapterFile.match(mainChapterPattern)?.[1] || 0);
+}
+
+function createReadChaptersValue(chapterFiles: string[]): string {
+  return chapterFiles
+    .map((file) => file.match(mainChapterPattern)?.[1] || file)
+    .join(",");
+}
+
+function getReaderId(): string {
+  const savedId = readStore(readerIdStoreKey);
+  if (savedId) return savedId;
+
+  const nextId =
+    typeof window !== "undefined" && window.crypto?.randomUUID
+      ? window.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
+  writeStore(readerIdStoreKey, nextId);
+  return nextId;
 }
 
 function trackOnce(

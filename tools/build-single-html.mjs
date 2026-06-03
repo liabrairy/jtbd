@@ -30,6 +30,7 @@ const chapterMeta = [
   { file: "12_chapter.md", label: "12", kind: "Часть III" },
   { file: "13_chapter.md", label: "13", kind: "Практика" },
   { file: "14_chapter.md", label: "14", kind: "Финал" },
+  { file: "15_chapter.md", label: "15", kind: "Финал" },
   { file: "15_appendix.md", label: "A15", kind: "Приложение" },
   { file: "16_appendix.md", label: "A16", kind: "Приложение" },
   { file: "17_appendix.md", label: "A17", kind: "Приложение" },

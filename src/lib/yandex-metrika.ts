@@ -4,8 +4,9 @@ const rawCounterId = process.env.NEXT_PUBLIC_YANDEX_METRIKA_ID?.trim() || defaul
 export const yandexMetrikaId = /^\d+$/.test(rawCounterId) ? rawCounterId : "";
 
 export const yandexMetrikaGoals = {
-  read50: "read_50",
-  read100: "read_100",
+  bookStarted: "book_started",
+  chapterRead: "chapter_read",
+  bookCompleted: "book_completed",
   searchUsed: "search_used",
   telegramClick: "telegram_click"
 } as const;
@@ -49,6 +50,10 @@ export function reachYandexMetrikaGoal(
   params: Record<string, unknown> = {}
 ): void {
   callYandexMetrika("reachGoal", goal, params);
+}
+
+export function sendYandexMetrikaUserParams(params: Record<string, unknown>): void {
+  callYandexMetrika("userParams", params);
 }
 
 function callYandexMetrika(methodName: string, ...params: unknown[]): void {
