@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { cache } from "react";
 
+import { getChapterSlug } from "@/lib/routes";
 import type { BookChapter } from "@/types/book";
 
 export const bookTitle = "Когда кофе и капуста конкурируют";
@@ -32,7 +34,7 @@ const chapterMeta = [
   { file: "18_notes.md", label: "N18", kind: "Примечания" }
 ] as const;
 
-export async function getBookChapters(): Promise<BookChapter[]> {
+export const getBookChapters = cache(async (): Promise<BookChapter[]> => {
   const translatedDir = path.join(process.cwd(), "translated");
 
   return Promise.all(
@@ -44,11 +46,17 @@ export async function getBookChapters(): Promise<BookChapter[]> {
         ...chapter,
         index,
         raw,
+        slug: getChapterSlug(chapter.file),
         title,
         words: countWords(raw)
       };
     })
   );
+});
+
+export async function getBookChapterBySlug(slug: string): Promise<BookChapter | null> {
+  const chapters = await getBookChapters();
+  return chapters.find((chapter) => chapter.slug === slug) || null;
 }
 
 function countWords(value: string): number {

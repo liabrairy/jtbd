@@ -201,6 +201,7 @@ h1 {
   background: transparent;
   color: var(--ink);
   text-align: left;
+  text-decoration: none;
 }
 
 .chapter-card:hover,
@@ -295,7 +296,8 @@ h1 {
 
 .tool-button,
 .icon-button,
-.pager button {
+.pager a,
+.pager span {
   border: 1px solid var(--line);
   border-radius: 6px;
   background: var(--paper-strong);
@@ -345,7 +347,7 @@ h1 {
 }
 
 .tool-button:hover,
-.pager button:hover {
+.pager a:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -611,13 +613,17 @@ h1 {
   padding: 0 clamp(18px, 5vw, 72px) 56px;
 }
 
-.pager button {
+.pager a,
+.pager span {
+  display: inline-flex;
+  align-items: center;
   min-height: 44px;
   padding: 0 16px;
   font-weight: 900;
+  text-decoration: none;
 }
 
-.pager button:disabled {
+.pager span {
   cursor: not-allowed;
   opacity: .42;
 }

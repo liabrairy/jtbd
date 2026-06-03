@@ -2,7 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
+import Link from "next/link";
 
+import {
+  bookAssetUrl,
+  createDefaultFigureImageMap,
+  injectFigureImages,
+  markdownToHtml
+} from "@/lib/book-rendering";
+import { getChapterPath } from "@/lib/routes";
 import {
   reachYandexMetrikaGoal,
   sendYandexMetrikaHit,
@@ -13,6 +21,7 @@ import type { BookChapter } from "@/types/book";
 
 type BookReaderProps = {
   chapters: BookChapter[];
+  initialChapterFile?: string;
 };
 
 type ReaderTheme = "" | "night";
@@ -22,7 +31,6 @@ type SectionLink = {
   title: string;
 };
 
-const basePath = process.env.NEXT_PUBLIC_BASE_PATH || "";
 const bookAnalyticsId = "when-coffee-and-kale-compete-ru";
 const bookCompletedStoreKey = "reader:book-completed:v1";
 const bookStartedProgressThreshold = 10;
@@ -32,8 +40,9 @@ const mainChapterPattern = /^(\d{2})_chapter\.md$/;
 const memoryStore = new Map<string, string>();
 const readChaptersStoreKey = "reader:read-chapters:v1";
 const readerIdStoreKey = "reader:id:v1";
+const readerTitleSuffix = "Когда кофе и капуста конкурируют";
 
-export function BookReader({ chapters }: BookReaderProps) {
+export function BookReader({ chapters, initialChapterFile }: BookReaderProps) {
   const figureImageMap = useMemo(() => createDefaultFigureImageMap(), []);
   const docs = useMemo(
     () =>
@@ -43,7 +52,11 @@ export function BookReader({ chapters }: BookReaderProps) {
       })),
     [chapters, figureImageMap]
   );
-  const [activeIndex, setActiveIndex] = useState(0);
+  const initialIndex = useMemo(() => {
+    const index = docs.findIndex((doc) => doc.file === initialChapterFile);
+    return index >= 0 ? index : 0;
+  }, [docs, initialChapterFile]);
+  const [activeIndex, setActiveIndex] = useState(initialIndex);
   const [activeSection, setActiveSection] = useState("");
   const [fontSize, setFontSize] = useState(19);
   const [isLibraryOpen, setIsLibraryOpen] = useState(false);
@@ -103,7 +116,7 @@ export function BookReader({ chapters }: BookReaderProps) {
     if (initializedRef.current || !docs.length) return;
 
     initializedRef.current = true;
-    const savedChapter = Number(readStore("reader:chapter") || 0);
+    const savedChapter = initialChapterFile ? initialIndex : Number(readStore("reader:chapter") || 0);
     const savedFont = Number(readStore("reader:font") || 19);
     const savedTheme = readStore("reader:theme") as ReaderTheme | null;
 
@@ -112,7 +125,14 @@ export function BookReader({ chapters }: BookReaderProps) {
     setFontSize(clamp(savedFont, 16, 24));
     setTheme(savedTheme === "night" ? "night" : "");
     setReaderReady(true);
-  }, [docs.length]);
+  }, [docs.length, initialChapterFile, initialIndex]);
+
+  useEffect(() => {
+    if (!readerReady || !initialChapterFile) return;
+
+    restoreScrollRef.current = true;
+    setActiveIndex(initialIndex);
+  }, [initialChapterFile, initialIndex, readerReady]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
@@ -127,7 +147,7 @@ export function BookReader({ chapters }: BookReaderProps) {
   useEffect(() => {
     if (!readerReady || !currentDoc || typeof window === "undefined") return;
 
-    document.title = `${currentDoc.title} | Читалка`;
+    document.title = `${currentDoc.title} | ${readerTitleSuffix}`;
     writeStore("reader:chapter", String(activeIndex));
     trackChapterView(currentDoc);
 
@@ -238,6 +258,7 @@ export function BookReader({ chapters }: BookReaderProps) {
             <ChapterCard
               active={doc.index === activeIndex}
               doc={doc}
+              href={getChapterPath(doc.slug)}
               key={doc.file}
               onOpen={() => openChapter(doc.index)}
               query={query}
@@ -324,7 +345,7 @@ export function BookReader({ chapters }: BookReaderProps) {
           </div>
           <div className="cover-stack" aria-label="Обложка книги">
             <Image
-              src={assetUrl("/cover.png")}
+              src={bookAssetUrl("/cover.png")}
               alt="Обложка When Coffee and Kale Compete"
               width={150}
               height={200}
@@ -365,20 +386,26 @@ export function BookReader({ chapters }: BookReaderProps) {
         </section>
 
         <footer className="pager">
-          <button
-            type="button"
-            disabled={activeIndex === 0}
-            onClick={() => openChapter(activeIndex - 1)}
-          >
-            ← Предыдущая
-          </button>
-          <button
-            type="button"
-            disabled={activeIndex === docs.length - 1}
-            onClick={() => openChapter(activeIndex + 1)}
-          >
-            Следующая →
-          </button>
+          {activeIndex > 0 ? (
+            <Link
+              href={getChapterPath(docs[activeIndex - 1].slug)}
+              onClick={() => openChapter(activeIndex - 1)}
+            >
+              ← Предыдущая
+            </Link>
+          ) : (
+            <span aria-disabled="true">← Предыдущая</span>
+          )}
+          {activeIndex < docs.length - 1 ? (
+            <Link
+              href={getChapterPath(docs[activeIndex + 1].slug)}
+              onClick={() => openChapter(activeIndex + 1)}
+            >
+              Следующая →
+            </Link>
+          ) : (
+            <span aria-disabled="true">Следующая →</span>
+          )}
         </footer>
       </main>
 
@@ -411,21 +438,24 @@ function HighlightedText({ query, value }: { query: string; value: string }) {
 function ChapterCard({
   active,
   doc,
+  href,
   onOpen,
   query
 }: {
   active: boolean;
   doc: BookChapter;
+  href: string;
   onOpen: () => void;
   query: string;
 }) {
   const matchCount = countSearchMatches(doc.raw, query);
 
   return (
-    <button
+    <Link
+      aria-current={active ? "page" : undefined}
       className={`chapter-card ${active ? "active" : ""}`}
-      type="button"
       onClick={onOpen}
+      href={href}
     >
       <span className="chapter-index">{doc.label}</span>
       <span className="chapter-info">
@@ -439,13 +469,8 @@ function ChapterCard({
           <span className="chapter-match-count">{formatMentionCount(matchCount)}</span>
         ) : null}
       </span>
-    </button>
+    </Link>
   );
-}
-
-function assetUrl(value: string): string {
-  const normalized = value.startsWith("/") ? value : `/${value}`;
-  return `${basePath}${normalized}`;
 }
 
 function trackChapterView(doc: BookChapter): void {
@@ -657,179 +682,6 @@ function createChapterAnalyticsUrl(chapterFile: string): string {
   return `${url.pathname}${url.search}`;
 }
 
-function injectFigureImages(markdown: string, figureImageMap: Record<string, string>): string {
-  const existingFigures = new Set(
-    [...markdown.matchAll(/!\[[^\]]*(?:Рис\.|Figure)\s*(\d+)/gi)].map((match) => match[1])
-  );
-  const insertedFigures = new Set<string>();
-
-  return markdown.replace(/^(\*\*Рис\.\s*(\d+)[^\n]*)$/gm, (match, line, figureNumber) => {
-    const imageSrc = figureImageMap[figureNumber];
-    if (!imageSrc || existingFigures.has(figureNumber) || insertedFigures.has(figureNumber)) {
-      return match;
-    }
-
-    insertedFigures.add(figureNumber);
-    return `![Рис. ${figureNumber}](${imageSrc})\n\n${line}`;
-  });
-}
-
-function markdownToHtml(markdown: string): string {
-  const lines = markdown.replace(/\r\n/g, "\n").split("\n");
-  const html: string[] = [];
-  let list: "ul" | "ol" | null = null;
-  let quote: string[] = [];
-
-  const closeList = () => {
-    if (!list) return;
-    html.push(`</${list}>`);
-    list = null;
-  };
-  const closeQuote = () => {
-    if (!quote.length) return;
-    html.push(`<blockquote>${quote.map((line) => `<p>${inline(line)}</p>`).join("")}</blockquote>`);
-    quote = [];
-  };
-
-  for (let index = 0; index < lines.length; index += 1) {
-    const line = lines[index];
-    const trimmed = line.trim();
-    if (!trimmed) {
-      closeList();
-      closeQuote();
-      continue;
-    }
-
-    const heading = trimmed.match(/^(#{1,3})\s+(.+)$/);
-    if (heading) {
-      closeList();
-      closeQuote();
-      html.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`);
-      continue;
-    }
-
-    const image = parseImageLine(trimmed);
-    if (image) {
-      closeList();
-      closeQuote();
-      const caption = findFollowingFigureCaption(lines, index);
-      if (caption) {
-        html.push(renderFigure(image.src, image.alt, caption.text));
-        index = caption.index;
-      } else {
-        html.push(renderFigure(image.src, image.alt));
-      }
-      continue;
-    }
-
-    if (trimmed.startsWith(">")) {
-      closeList();
-      quote.push(trimmed.replace(/^>\s?/, ""));
-      continue;
-    }
-
-    const unordered = trimmed.match(/^[-*]\s+(.+)$/);
-    const ordered = trimmed.match(/^\d+\.\s+(.+)$/);
-    if (unordered || ordered) {
-      closeQuote();
-      const type = unordered ? "ul" : "ol";
-      const listItem = unordered?.[1] ?? ordered?.[1] ?? "";
-      if (list !== type) {
-        closeList();
-        html.push(`<${type}>`);
-        list = type;
-      }
-      html.push(`<li>${inline(listItem)}</li>`);
-      continue;
-    }
-
-    closeList();
-    closeQuote();
-    html.push(`<p>${inline(trimmed)}</p>`);
-  }
-
-  closeList();
-  closeQuote();
-  return html.join("\n");
-}
-
-function parseImageLine(line: string): { alt: string; src: string } | null {
-  const match = line.match(/^!\[([^\]]*)]\((?:<([^>]+)>|([^)]+))\)$/);
-  if (!match) return null;
-
-  return {
-    alt: match[1],
-    src: match[2] || match[3]
-  };
-}
-
-function findFollowingFigureCaption(
-  lines: string[],
-  imageLineIndex: number
-): { index: number; text: string } | null {
-  let index = imageLineIndex + 1;
-  while (index < lines.length && !lines[index].trim()) {
-    index += 1;
-  }
-
-  const line = lines[index]?.trim();
-  if (!line || !/^\*\*Рис\.\s*\d+/.test(line)) return null;
-
-  return {
-    index,
-    text: normalizeFigureCaption(line)
-  };
-}
-
-function normalizeFigureCaption(line: string): string {
-  return line
-    .replace(/^\*\*(Рис\.\s*\d+\.?)\*\*\s*/, "$1 ")
-    .replace(/^\*\*/, "")
-    .replace(/\*\*$/, "")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-function renderFigure(src: string, alt: string, caption = ""): string {
-  const fallbackAlt = caption || alt || "Иллюстрация";
-
-  return `
-    <figure class="book-figure">
-      <div class="figure-frame">
-        <img src="${escapeHtml(src)}" alt="${escapeHtml(fallbackAlt)}" loading="lazy">
-      </div>
-      ${caption ? `<figcaption>${inline(caption)}</figcaption>` : ""}
-    </figure>
-  `;
-}
-
-function inline(value: string): string {
-  const links: string[] = [];
-  const createLink = (href: string, text = href) => {
-    const token = `@@LINK_${links.length}@@`;
-    links.push(
-      `<a href="${escapeHtml(href)}" target="_blank" rel="noopener noreferrer">${text}</a>`
-    );
-    return token;
-  };
-
-  const linked = escapeHtml(value)
-    .replace(/\[([^\]]+)]\((https?:\/\/[^)\s]+)\)/g, (_match, text, href) =>
-      createLink(href, text)
-    )
-    .replace(/\bhttps?:\/\/[^\s<]+/g, (match) => {
-      const punctuation = match.match(/[.,;:!?)]$/)?.[0] || "";
-      const href = punctuation ? match.slice(0, -1) : match;
-      return `${createLink(href)}${punctuation}`;
-    });
-
-  return linked
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/@@LINK_(\d+)@@/g, (_match, index) => links[Number(index)]);
-}
-
 function filterDocs(docs: BookChapter[], query: string): BookChapter[] {
   const clean = query.trim();
   if (!clean) return docs;
@@ -853,18 +705,6 @@ function formatMentionCount(count: number): string {
     return `${count} упоминания`;
   }
   return `${count} упоминаний`;
-}
-
-function countWords(value: string): number {
-  return (value.match(/[A-Za-zА-Яа-яЁё0-9-]+/g) || []).length;
-}
-
-function createDefaultFigureImageMap(): Record<string, string> {
-  const map: Record<string, string> = {};
-  for (let figure = 1; figure <= 36; figure += 1) {
-    map[String(figure)] = assetUrl(`/images/imageFile${figure + 1}.png`);
-  }
-  return map;
 }
 
 function readStore(key: string): string | null {

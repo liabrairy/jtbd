@@ -36,6 +36,7 @@ jobs:
         shell: bash
         run: |
           echo "NEXT_PUBLIC_BASE_PATH=${{ steps.pages.outputs.base_path }}" >> "$GITHUB_ENV"
+          echo "NEXT_PUBLIC_SITE_URL=${{ steps.pages.outputs.base_url }}" >> "$GITHUB_ENV"
           echo "NEXT_PUBLIC_YANDEX_METRIKA_ID=${{ secrets.YANDEX_METRIKA_ID }}" >> "$GITHUB_ENV"
 
       - name: Install dependencies
